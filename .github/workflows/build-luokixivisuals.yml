@@ -6,8 +6,11 @@ on:
     branches:
       - luokixi-visuals-dev
     paths:
-      - 'development/luokixivisuals/**'
+      - '.ci/luokixivisuals-source.b64'
       - '.github/workflows/build-luokixivisuals.yml'
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -15,6 +18,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: luokixi-visuals-dev
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -27,6 +32,43 @@ jobs:
         with:
           gradle-version: '8.1.1'
 
+      - name: Decode LuokixiVisuals source
+        shell: bash
+        run: |
+          rm -rf development/luokixivisuals
+          mkdir -p development
+          base64 -d .ci/luokixivisuals-source.b64 > /tmp/luokixivisuals-source.zip
+          unzip -q /tmp/luokixivisuals-source.zip -d development
+          test -f development/luokixivisuals/build.gradle
+
+      - name: Apply render-stack safety optimization
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('development/luokixivisuals/src/main/java/com/luokixi/visuals/client/ClientEvents.java')
+          s = p.read_text(encoding='utf-8')
+          if 'SHOWCASE_POSE_PUSHED' not in s:
+              s = s.replace(
+                  '    private static long lastWardrobeNotice = -1000L;\n',
+                  '    private static long lastWardrobeNotice = -1000L;\n    private static final ThreadLocal<Boolean> SHOWCASE_POSE_PUSHED = ThreadLocal.withInitial(() -> false);\n'
+              )
+              old = '''    @SubscribeEvent(priority = EventPriority.HIGHEST)\n    public static void onPlayerRenderPre(RenderPlayerEvent.Pre event) {\n        Player player = event.getEntity();\n        if (!isShowcase(player)) return;\n        float bob = (float) Math.sin((player.tickCount + event.getPartialTick()) * 0.085F) * 0.065F;\n        PoseStack poseStack = event.getPoseStack();\n        poseStack.translate(0.0D, SHOWCASE_LIFT + bob, 0.0D);\n        poseStack.scale(SHOWCASE_SCALE, SHOWCASE_SCALE, SHOWCASE_SCALE);\n    }\n'''
+              new = '''    @SubscribeEvent(priority = EventPriority.HIGHEST)\n    public static void onPlayerRenderPre(RenderPlayerEvent.Pre event) {\n        Player player = event.getEntity();\n        if (!isShowcase(player)) return;\n        PoseStack poseStack = event.getPoseStack();\n        poseStack.pushPose();\n        SHOWCASE_POSE_PUSHED.set(true);\n        float bob = (float) Math.sin((player.tickCount + event.getPartialTick()) * 0.085F) * 0.065F;\n        poseStack.translate(0.0D, SHOWCASE_LIFT + bob, 0.0D);\n        poseStack.scale(SHOWCASE_SCALE, SHOWCASE_SCALE, SHOWCASE_SCALE);\n    }\n'''
+              if old not in s:
+                  raise SystemExit('showcase pre-render block not found')
+              s = s.replace(old, new)
+              old2 = '''    @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)\n    public static void onPlayerRenderPreFlame(RenderPlayerEvent.Pre event) {\n        if (!event.isCanceled()) return;\n        renderAmaterasu(event.getEntity(), event.getPoseStack(), event.getMultiBufferSource(), event.getPartialTick());\n    }\n\n    @SubscribeEvent(priority = EventPriority.LOWEST)\n    public static void onPlayerRenderPost(RenderPlayerEvent.Post event) {\n        renderAmaterasu(event.getEntity(), event.getPoseStack(), event.getMultiBufferSource(), event.getPartialTick());\n    }\n'''
+              new2 = '''    @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)\n    public static void onPlayerRenderPreFlame(RenderPlayerEvent.Pre event) {\n        if (!event.isCanceled()) return;\n        try {\n            renderAmaterasu(event.getEntity(), event.getPoseStack(), event.getMultiBufferSource(), event.getPartialTick());\n        } finally {\n            popShowcasePose(event.getPoseStack());\n        }\n    }\n\n    @SubscribeEvent(priority = EventPriority.LOWEST)\n    public static void onPlayerRenderPost(RenderPlayerEvent.Post event) {\n        try {\n            renderAmaterasu(event.getEntity(), event.getPoseStack(), event.getMultiBufferSource(), event.getPartialTick());\n        } finally {\n            popShowcasePose(event.getPoseStack());\n        }\n    }\n\n    private static void popShowcasePose(PoseStack poseStack) {\n        if (!SHOWCASE_POSE_PUSHED.get()) return;\n        SHOWCASE_POSE_PUSHED.set(false);\n        poseStack.popPose();\n    }\n'''
+              if old2 not in s:
+                  raise SystemExit('showcase post-render block not found')
+              s = s.replace(old2, new2)
+              p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Install texture generator dependency
+        run: python3 -m pip install --disable-pip-version-check pillow
+
       - name: Generate Amaterasu texture
         working-directory: development/luokixivisuals
         run: python3 tools/make_amaterasu.py
@@ -35,9 +77,37 @@ jobs:
         working-directory: development/luokixivisuals
         run: gradle build --stacktrace
 
+      - name: Verify jar contents
+        shell: bash
+        run: |
+          JAR=$(find development/luokixivisuals/build/libs -maxdepth 1 -name 'LuokixiVisuals-*.jar' -type f | head -n 1)
+          test -n "$JAR"
+          jar tf "$JAR" | grep -q '^META-INF/mods.toml$'
+          jar tf "$JAR" | grep -q '^com/luokixi/visuals/LuokixiVisuals.class$'
+          jar tf "$JAR" | grep -q '^com/luokixi/visuals/client/ClientEvents.class$'
+          jar tf "$JAR" | grep -q '^assets/luokixivisuals/textures/effect/amaterasu.png$'
+          mkdir -p development/releases
+          cp "$JAR" development/releases/LuokixiVisuals-1.0.0-test.jar
+          sha256sum development/releases/LuokixiVisuals-1.0.0-test.jar > development/releases/LuokixiVisuals-1.0.0-test.jar.sha256
+
       - name: Upload LuokixiVisuals jar
         uses: actions/upload-artifact@v4
         with:
-          name: LuokixiVisuals-1.0.0
-          path: development/luokixivisuals/build/libs/*.jar
+          name: LuokixiVisuals-1.0.0-test
+          path: |
+            development/releases/LuokixiVisuals-1.0.0-test.jar
+            development/releases/LuokixiVisuals-1.0.0-test.jar.sha256
           if-no-files-found: error
+
+      - name: Publish verified jar to dev branch
+        shell: bash
+        run: |
+          git config user.name 'LuokixiVisuals CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -f development/releases/LuokixiVisuals-1.0.0-test.jar development/releases/LuokixiVisuals-1.0.0-test.jar.sha256
+          if git diff --cached --quiet; then
+            echo 'No binary change to publish.'
+          else
+            git commit -m 'CI: publish verified LuokixiVisuals test jar'
+            git push origin HEAD:luokixi-visuals-dev
+          fi
