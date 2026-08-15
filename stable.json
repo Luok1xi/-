@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "version": "1.0.0",
+  "title": "Luokixi 新人客户端基础包",
+  "notes": "Minecraft 1.20.1 / Forge 47.4.22；包含当前客户端 Mod、Patchouli 指南资源与 20 个神谕 YSM 模型。服务端 V10.3 注册表同步补丁暂未启用。",
+  "package_url": "https://github.com/Luok1xi/-/releases/download/client-1.0.0/luokixi-client-bootstrap-1.0.0.zip",
+  "sha256": "f30a943a1adff3ff5cceb1372647f6fe5cc25a04e69e834ae4f3eb0a7231d45d",
+  "restart": "full",
+  "minimum_installer": "0.8.0"
+}
