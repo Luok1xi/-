@@ -1,0 +1,43 @@
+name: Build LuokixiVisuals
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - luokixi-visuals-dev
+    paths:
+      - 'development/luokixivisuals/**'
+      - '.github/workflows/build-luokixivisuals.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.1.1'
+
+      - name: Generate Amaterasu texture
+        working-directory: development/luokixivisuals
+        run: python3 tools/make_amaterasu.py
+
+      - name: Build Forge 1.20.1 mod
+        working-directory: development/luokixivisuals
+        run: gradle build --stacktrace
+
+      - name: Upload LuokixiVisuals jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: LuokixiVisuals-1.0.0
+          path: development/luokixivisuals/build/libs/*.jar
+          if-no-files-found: error
