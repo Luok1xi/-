@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "version": "0.0.0-example",
+  "title": "Luokixi 服务器资源",
+  "notes": "示例清单；正式 stable.json 会在首个真实更新包准备完成后启用。",
+  "package_url": "https://example.invalid/luokixi-client.zip",
+  "sha256": "",
+  "restart": "full",
+  "minimum_installer": "0.7.3"
+}
